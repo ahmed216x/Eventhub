@@ -1,0 +1,100 @@
+﻿using System;
+using System.Timers;
+using Azure.Messaging.EventHubs;
+using Azure.Messaging.EventHubs.Producer;
+
+namespace OSIsoftPI2AzureEventHub
+{
+    class InitiateTransfer
+    {
+        Messagelogger log = new Messagelogger();
+
+         
+       // log4net.ILog _log = log4net.LogManager.GetLogger(typeof(Program));
+
+        string afsrv = System.Configuration.ConfigurationManager.AppSettings["afserver"];
+        string afdb = System.Configuration.ConfigurationManager.AppSettings["afdatabase"];
+        string afTemplate = System.Configuration.ConfigurationManager.AppSettings["aftemplate"];
+        static int runInterval = Convert.ToInt32(System.Configuration.ConfigurationManager.AppSettings["sendschedule"]);
+        string[] alist = System.Configuration.ConfigurationManager.AppSettings["attriblist"].Split(',');
+        string logpath = System.Configuration.ConfigurationManager.AppSettings["afserver"];
+        string ehName = System.Configuration.ConfigurationManager.AppSettings["EventHubName"];
+        string ehconnString = System.Configuration.ConfigurationManager.AppSettings["EventHubConnString"];
+
+        private int DataReadInterval = runInterval * 1000;   
+
+        private readonly System.Timers.Timer _timer;
+        public static volatile bool _canContinue = true;
+        private AFDatapipeListener afListener = new AFDatapipeListener();
+
+
+        /// <summary>
+        /// Constructor : InitiateTransfer()
+        /// Details : This constructor is inilized when the service first runs which call the "Run" Event handler after 5 seconds.
+        /// </summary>
+        public InitiateTransfer()
+        {
+            _timer = new System.Timers.Timer(5000);
+            _timer.Elapsed += Run;
+        }
+
+        /// <summary>
+        /// Method : start().
+        /// Details : This method is called when service starts and logs an entry to the log file.
+        /// </summary>
+        public void start()
+        {
+            _timer.Start();
+            log.writeLog("INFO | Service Started.", "Log Folder", 0);
+            //_log.Info("Service Started.");
+        }
+
+        /// <summary>
+        /// Event: Run()
+        /// Details : This Event is triggered the elapsed timer is set to 15 mins.
+        /// </summary>
+        public void Run(object sender, ElapsedEventArgs e)
+        {
+            _timer.Stop();
+            _timer.Dispose();
+
+            var eh = new EventHub();
+            var prodClient = eh.connectEventHub(ehconnString, ehName);
+            var evtBatch = eh.CreateBatch(prodClient);
+
+            if (evtBatch != null)
+            {
+
+                AfContext afContext = new AfContext();
+
+                var attrList = afContext.GetAttributes(afsrv, afdb, afTemplate, alist);
+
+                //var datapipes = new DataPipesHelper();
+                //datapipes.AddSignup(attrList);
+                // datapipes.StartListening(TimeSpan.FromSeconds(10));
+
+                afListener.CreateAFDataPipe(attrList, DataReadInterval, prodClient, evtBatch);
+            }
+
+        }
+
+        /// <summary>
+        /// Methode: stop()
+        /// Details : This method is called when the service is stopped.
+        /// </summary>
+        public void stop()
+        {
+            try
+            {
+                _canContinue = false;
+                afListener.StopListening();
+                log.writeLog("INFO | Service Stopped.", "LogFolder", 0);
+            }
+            catch (Exception exp)
+            {
+                log.writeLog("ERROR | " + exp.Message, "LogFolder", 0);
+            }
+        }
+
+    }
+}

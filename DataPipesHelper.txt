@@ -1,0 +1,202 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using OSIsoft.AF;
+using OSIsoft.AF.Asset;
+using OSIsoft.AF.Data;
+using OSIsoft.AF.PI;
+
+
+namespace OSIsoftPI2AzureEventHub
+{
+    class DataPipesHelper:IDisposable
+    {
+        // Members  
+        private readonly AFDataPipe _afDataPipe = new AFDataPipe();
+        //private readonly PIDataPipe _piSnapshotDataPipe = new PIDataPipe(AFDataPipeType.Snapshot);
+        //private readonly PIDataPipe _piArchiveDataPipe = new PIDataPipe(AFDataPipeType.Archive);
+        private Timer _timer;
+
+        /// <summary>  
+        /// Constructor  
+        /// </summary>  
+        public DataPipesHelper()
+        {
+            // YOU SHOULD CONSIDER PASSING THE DATA RECEIVERS (AS IOBSERVER OBJECTS ) TO THIS CLASS, HERE THEY ARE HARD CODED FOR DEMONSTRATION PURPOSE      
+            _afDataPipe.Subscribe(new AFConsoleDataReceiver());
+            //_piSnapshotDataPipe.Subscribe(new PIConsoleDataReceiver(AFDataPipeType.Snapshot));
+            //_piArchiveDataPipe.Subscribe(new PIConsoleDataReceiver(AFDataPipeType.Archive));
+        }
+
+
+        /// <summary>  
+        /// Starts the data update  
+        /// </summary>  
+        /// <param name="checkIntervall">interval that set how often GetObserverEvents is called </param>  
+        public void StartListening(TimeSpan checkIntervall)
+        {
+            if (_timer == null)
+                _timer = new Timer(CheckForData, null, 0, (int)checkIntervall.TotalMilliseconds);
+        }
+
+
+        /// <summary>  
+        /// Stops the data update  
+        /// </summary>  
+        public void StopListening()
+        {
+            if (_timer != null)
+                _timer.Dispose();
+        }
+
+
+        /// <summary>  
+        /// add  attributes signups to the class  
+        /// </summary>  
+        /// <param name="attributes"></param>  
+        public void AddSignup(IList<AFAttribute> attributes)
+        {
+            _afDataPipe.AddSignups(attributes);
+        }
+
+        /// <summary>  
+        /// add pipoints signups to the class  
+        /// </summary>  
+        /// <param name="piPoints"></param>  
+        /// <param name="afDataPipeType"></param>  
+      /*
+        public void AddSignup(IList<PIPoint> piPoints, AFDataPipeType afDataPipeType)
+        {
+            switch (afDataPipeType)
+            {
+                case AFDataPipeType.Archive:
+                    _piArchiveDataPipe.AddSignups(piPoints);
+                    break;
+                case AFDataPipeType.Snapshot:
+                    _piSnapshotDataPipe.AddSignups(piPoints);
+                    break;
+
+
+                case AFDataPipeType.TimeSeries:
+                    throw new NotImplementedException("Time Series Data Pipe is not implemented in this class");
+                    break;
+            }
+
+        }
+      */
+        /// <summary>  
+        /// This method retrieves data from the PI Update Manager  
+        /// Its is used internally by the timer every X seconds  
+        /// </summary>  
+        /// <param name="o"></param>  
+        private void CheckForData(object o)
+        {
+
+            bool hasMoreEvents;
+            do
+            {
+                _afDataPipe.GetObserverEvents(out hasMoreEvents);
+            } 
+            while (hasMoreEvents);
+        /*
+            do
+            {
+                _piArchiveDataPipe.GetObserverEvents(1000, out hasMoreEvents);
+            }
+            while (hasMoreEvents);
+
+            do
+            {
+                _piSnapshotDataPipe.GetObserverEvents(1000, out hasMoreEvents);
+            }
+            while (hasMoreEvents);
+        */
+        }
+
+        /// <summary>  
+        /// Free the resource  
+        /// </summary>  
+        public void Dispose()
+        {
+            StopListening();
+            _afDataPipe.Dispose();
+           // _piSnapshotDataPipe.Dispose();
+          //  _piArchiveDataPipe.Dispose();
+
+        }
+    }
+
+    public class AFConsoleDataReceiver : IObserver<AFDataPipeEvent>
+    {
+        /// <summary>  
+        /// Provides the observer with new data.  
+        /// </summary>  
+        /// <param name="value"></param>  
+        public void OnNext(AFDataPipeEvent value)
+        {
+            Console.WriteLine("AFDataPipe event - Attribute Name: {0}, Action Type: {1}, Value {2}, TimeStamp: {3}", value.Value.Attribute.PIPoint, value.Action.ToString(), value.Value.Value, value.Value.Timestamp.ToString());
+        }
+
+        /// <summary>  
+        /// An error has occured  
+        /// </summary>  
+        /// <param name="error"></param>  
+        public void OnError(Exception error)
+        {
+            Console.WriteLine("Provider has sent an error");
+            Console.WriteLine(error.Message);
+            Console.WriteLine(error.StackTrace);
+        }
+
+        /// <summary>  
+        /// Notifies the observer that the provider has finished sending push-based notifications.  
+        /// </summary>  
+        public void OnCompleted()
+        {
+            Console.WriteLine("Provider has terminated sending data");
+        }
+    }
+
+    /// <summary>  
+    /// This class receives data from a PI Data Pipe  
+    /// </summary>  
+    public class PIConsoleDataReceiver : IObserver<AFDataPipeEvent>
+    {
+
+        private AFDataPipeType _dataPipeType;
+
+        public PIConsoleDataReceiver(AFDataPipeType afDataPipeType)
+        {
+            _dataPipeType = afDataPipeType;
+        }
+
+        /// <summary>  
+        /// Provides the observer with new data.  
+        /// </summary>  
+        /// <param name="value"></param>  
+        public void OnNext(AFDataPipeEvent value)
+        {
+            Console.WriteLine("PIDataPipe event - {4} - Tag Name: {0}, Action Type: {1}, Value {2}, TimeStamp: {3}", value.Value.PIPoint.Name, value.Action.ToString(), value.Value.Value, value.Value.Timestamp.ToString(), _dataPipeType);
+        }
+
+        /// <summary>  
+        /// An error has occured  
+        /// </summary>  
+        /// <param name="error"></param>  
+        public void OnError(Exception error)
+        {
+            Console.WriteLine("Provider has sent an error");
+            Console.WriteLine(error.Message);
+            Console.WriteLine(error.StackTrace);
+        }
+
+        /// <summary>  
+        /// Notifies the observer that the provider has finished sending push-based notifications.  
+        /// </summary>  
+        public void OnCompleted()
+        {
+            Console.WriteLine("Provider has terminated sending data");
+        }
+    }
+}

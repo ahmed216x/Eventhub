@@ -1,0 +1,169 @@
+﻿using Newtonsoft.Json;
+using OSIsoft.AF.Asset;
+using OSIsoft.AF.Data;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Azure.Messaging.EventHubs;
+using Azure.Messaging.EventHubs.Producer;
+using OSIsoft.AF.PI;
+
+namespace OSIsoftPI2AzureEventHub
+{
+    class AFDatapipeListener
+    {
+        // variable that tells if the task (thread) to read data pipes can continue
+        // we need to set it to volatile to make sure the compiler generate proper code
+        // so the _canContinue variable is always updated in all our threads
+        private static volatile bool _canContinue = true;
+        private readonly List<Task> _tasks = new List<Task>();
+
+        Messagelogger log = new Messagelogger();
+        AFDataPipe afDataPipe = new AFDataPipe();
+
+        AfContext af = new AfContext();
+
+        string ehName = System.Configuration.ConfigurationManager.AppSettings["EventHubName"];
+        string ehconnString = System.Configuration.ConfigurationManager.AppSettings["EventHubConnString"];
+        string afsrv = System.Configuration.ConfigurationManager.AppSettings["afserver"];
+        string afdb = System.Configuration.ConfigurationManager.AppSettings["afdatabase"];
+        string afTemplate = System.Configuration.ConfigurationManager.AppSettings["aftemplate"];
+        string[] alist = System.Configuration.ConfigurationManager.AppSettings["attriblist"].Split(',');
+        static int afScan = Convert.ToInt32(System.Configuration.ConfigurationManager.AppSettings["afScantime"]);
+        string logpath = System.Configuration.ConfigurationManager.AppSettings["logpath"];
+        string tz = System.Configuration.ConfigurationManager.AppSettings["timezone"];
+
+        private int afScantime = afScan == 0 ? 60000 : afScan*1000;
+
+
+        /// <summary>
+        /// Creates an AF data Pipe and starts listening it.
+        /// </summary>
+        public void CreateAFDataPipe(IList<AFAttribute> attributes, int dataUpdateInterval, EventHubProducerClient producerClient, EventDataBatch eventBatch)
+        {
+            var afDatapipeTask = Task.Run(async () => await AfDataPipeTask(attributes, dataUpdateInterval, producerClient,eventBatch));
+            _tasks.Add(afDatapipeTask);
+
+           // var afMonitorTask= Task.Run(() => AFMonitor());
+          //  _tasks.Add(afMonitorTask);
+
+            log.writeLog("INFO | Created AF DataPipe Task - thread ID " + afDatapipeTask.Id + ".", logpath, 0);
+            //log.writeLog("INFO | Created AF Monitor Task - thread ID " + afMonitorTask.Id + ".", logpath, 0);
+
+            Console.WriteLine("Created AF DataPipe Task - thread ID {0}", afDatapipeTask.Id);
+           // Console.WriteLine("Created AF Monitor Task - thread ID {0}", afMonitorTask.Id);
+            
+        }
+
+        /// <summary>
+        /// Stops all DataPipes currently running.
+        /// </summary>
+        public void StopListening()
+        {
+            Console.WriteLine("Terminating, waiting for processing threads to terminate");
+            log.writeLog("INFO | Terminating, waiting for processing threads to terminate.", logpath, 0);
+            log.writeLog("INFO | Task count " + _tasks.Count, logpath, 0);
+
+            // we wait until all "listening" tasks are terminated
+           Task.WhenAll(_tasks);
+           _tasks.Clear();
+            log.writeLog("INFO | Task clear " , logpath, 0);
+            afDataPipe.Dispose();
+
+            Console.WriteLine("Monitoring Events Stopped");
+            log.writeLog("INFO | Monitoring Events Stopped.", logpath, 0);
+        }
+
+
+        /// <summary>
+        /// Task to monitor AF for new added attributes.
+        /// </summary>
+        private void AFMonitor()
+        {
+            while (_canContinue) // this statement keepes the task (thread) alive
+            {
+                IList<AFAttribute> attrib = af.GetAttributes(afsrv, afdb, afTemplate, alist);
+                var signedupAttributes = afDataPipe.GetSignups();
+
+                var newAttributes = attrib.Except<AFAttribute>(signedupAttributes).ToList();
+
+                var deleteAttributes = signedupAttributes.Except<AFAttribute>(attrib).ToList();
+
+                if (newAttributes.Count > 0)
+                {
+                    afDataPipe.AddSignups(newAttributes); // Subscribe the new attributes.
+                    Console.WriteLine(newAttributes.Count + " New Attributes Added. Total attributes " + afDataPipe.GetSignups().Count);
+                    log.writeLog("INFO | " + newAttributes.Count + " New Attributess Added. Total attributes signedup: " + afDataPipe.GetSignups().Count, logpath+@"\AF Monitor", 0);
+                }
+                if (deleteAttributes.Count > 0)
+                {
+                    afDataPipe.RemoveSignups(deleteAttributes); // deleted attributes Subscribed list.
+                    Console.WriteLine(deleteAttributes.Count + " Attributes Deleted. Total attributes " + afDataPipe.GetSignups().Count);
+                    log.writeLog("INFO | " + deleteAttributes.Count + " Attributess Deleted.Total attributes signedup: " + afDataPipe.GetSignups().Count, logpath + @"\AF Monitor", 0);
+                }
+                Thread.Sleep(afScantime);
+            }
+
+        }
+
+
+        /// <summary>
+        /// Task (Action) to monitor the AF Data Pipe.
+        /// </summary>
+        private Task AfDataPipeTask(IList<AFAttribute> attributes, int dataUpdateInterval, EventHubProducerClient producerClient, EventDataBatch eventBatch)
+        {
+            try
+            {
+                using (afDataPipe)
+                {
+                    afDataPipe.AddSignupsWithInitEvents(attributes);
+                    log.writeLog("INFO | Total attributes signedup: " + attributes.Count, logpath, 0);
+
+                    while (_canContinue) // this statement keepes the task (thread) alive
+                    {
+                        bool bMoreEvents = true;
+                        while (bMoreEvents) // we need this loop to be certain that we empty the data pipe each time we come...
+                        {
+                            List<JsonWrap> dataobjects = new List<JsonWrap>();
+                            var results = afDataPipe.GetUpdateEvents(out bMoreEvents);
+
+                            if (results.Count > 0)
+                            {
+                                foreach (var dataPipeEvent in results.Results)
+                                {
+                                    JsonWrap jobj = new JsonWrap();
+                                    var pt = dataPipeEvent.Value.Attribute.PIPoint;
+                                    pt.LoadAttributes();
+                                    jobj.pointId = dataPipeEvent.Value.Attribute.PIPoint.ID;
+                                    jobj.name = dataPipeEvent.Value.Attribute.PIPoint.Name;
+                                    jobj.value = (dataPipeEvent.Value.Attribute.PIPoint.PointType.ToString().ToLower() == "digital") ? dataPipeEvent.Value.Value.ToString() : dataPipeEvent.Value.Value.ToString();
+                                    jobj.uom = pt.GetAttribute(PICommonPointAttributes.EngineeringUnits).ToString();
+                                    jobj.quality = dataPipeEvent.Value.Status.ToString();
+                                    jobj.mode = dataPipeEvent.Action.ToString();
+                                    jobj.timestamp = (tz.ToLower() == "utc") ? dataPipeEvent.Value.Timestamp.UtcTime.ToString() : dataPipeEvent.Value.Timestamp.LocalTime.ToString();
+                                    dataobjects.Add(jobj);
+                                }
+
+                                Console.WriteLine("New Ingestion: " + DateTime.Now);
+                                EventHub eh = new EventHub();
+                                var ehTask = Task.Run(async () => await eh.EventHubIngestionAsync(producerClient, eventBatch, dataobjects));
+                                _tasks.Add(ehTask);
+                            }
+                        }
+                        _tasks.RemoveAll(x=>x.IsCompleted);
+                        Thread.Sleep(dataUpdateInterval); // this helps reducing CPU consumption and network calls to PI to check the Pipe.
+
+                    }
+                }
+            }
+            catch(Exception ex)
+            {
+                log.writeLog(ex.ToString(), logpath, 1);
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+}

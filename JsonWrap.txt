@@ -1,0 +1,16 @@
+﻿using System;
+
+namespace OSIsoftPI2AzureEventHub
+{
+    class JsonWrap
+    {       
+        public int pointId { get; set; }
+        public string name { get; set; }
+        public string value { get; set; }
+        public string uom { get; set; }
+        public string quality { get; set; }
+        public string mode { get; set; }
+        public string timestamp { get; set; }
+
+    }
+}

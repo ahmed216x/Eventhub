@@ -1,0 +1,107 @@
+﻿using Azure.Messaging.EventHubs;
+using Azure.Messaging.EventHubs.Producer;
+using Newtonsoft.Json;
+using System;
+using System.Collections.Generic;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace OSIsoftPI2AzureEventHub
+{
+    class EventHub
+    {
+        Messagelogger log = new Messagelogger();
+        string logpath = System.Configuration.ConfigurationManager.AppSettings["logpath"];
+        string compression = System.Configuration.ConfigurationManager.AppSettings["compression"];
+
+        public EventHubProducerClient connectEventHub(string connectionString, string eventHubName)
+        {
+            var producerClient = new EventHubProducerClient(connectionString, eventHubName);
+            return producerClient;
+        }
+        public async Task<EventDataBatch> CreateBatchAsync(EventHubProducerClient producerClient)
+        {
+            EventDataBatch eventBatch = default;
+            try
+            {
+                eventBatch = await producerClient.CreateBatchAsync();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+            }
+
+            return eventBatch;
+        }
+
+        public EventDataBatch CreateBatch(EventHubProducerClient producerClient)
+        {
+            EventDataBatch evtBatch = CreateBatchAsync(producerClient).Result;
+            
+                return evtBatch;
+        }
+
+        public async Task EventHubIngestionAsync(EventHubProducerClient producerClient,EventDataBatch eventBatch, List<JsonWrap> dobj)
+        {
+            eventBatch = await producerClient.CreateBatchAsync();
+
+
+            {
+                try
+                {   foreach (var obj in dobj)
+                    {
+                        var strcsv = JsonConvert.SerializeObject(obj);
+                        //Console.WriteLine(System.Text.ASCIIEncoding.ASCII.GetByteCount(strcsv));
+                        //EventData evtData = CreateEvent(format.jsontocsv(JsonConvert.SerializeObject(obj).ToString()));
+                        EventData evtData = CreateEvent(JsonConvert.SerializeObject(obj));
+                        evtData.Properties.Add("Compression", compression);
+                        var flag = eventBatch.TryAdd(evtData);
+                        
+                        if (flag == false)
+                        {   
+                            await producerClient.SendAsync(eventBatch);
+                            Console.WriteLine("event entered: " + eventBatch.Count);
+                            //eventBatch.Dispose();
+
+                            eventBatch = default;
+                            eventBatch = await producerClient.CreateBatchAsync();
+                            flag = eventBatch.TryAdd(evtData);
+                            Console.WriteLine("inside flag : " + flag);
+                        }
+                    }
+
+                    if (eventBatch != default && eventBatch.Count > 0)
+                    {
+                        await producerClient.SendAsync(eventBatch);
+                        Console.WriteLine("event entered: " + eventBatch.Count);
+                    }
+                    
+                }
+                catch (Exception exception)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine("{0} > Exception: {1}", DateTime.Now, exception.Message);
+                    Console.ResetColor();
+
+                    log.writeLog("ERROR |  " + exception.Message , logpath, 1);
+                }
+            }
+            //_= producerClient.CloseAsync();
+        }
+
+        public EventData CreateEvent(string jsonStr)
+        {
+            DataCompression dc = new DataCompression();
+            EventData eventData;
+            if (compression.ToLower() == "gzip")
+            {
+                 eventData = new EventData(dc.CompressMessage(jsonStr, true));
+            }
+            else
+            {
+                 eventData = new EventData(dc.CompressMessage(jsonStr, false));
+            }
+            return eventData;
+        }
+    }
+}

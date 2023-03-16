@@ -1,0 +1,56 @@
+﻿using System;
+using System.IO;
+
+namespace OSIsoftPI2AzureEventHub
+{
+    /// <summary>
+    /// This class is responsible for errors and information logging.
+    /// </summary>
+    class Messagelogger
+    {
+        /// <summary>
+        /// Method : writeLog()
+        /// Details : This method is used to write to a log file.
+        /// </summary>
+        public void writeLog(string logMessage, string logPath, int msgCode)
+        {
+            try
+            {
+                bool folderExists = Directory.Exists(logPath);
+                if (!folderExists)
+                {
+                    Directory.CreateDirectory(logPath);
+                }
+                if (msgCode == 0)
+                {
+                    string logFile = "AF Transfer Log " + DateTime.Now.ToString("MM-dd-yyyy") + ".txt";
+                    using (StreamWriter w = new StreamWriter(logPath + "/" + logFile, true))
+                    {
+                        w.WriteLine("{0} {1} : {2}", DateTime.Now.ToLongTimeString(),
+                        DateTime.Now.ToLongDateString(), logMessage);
+                    }
+                }
+                else
+                {
+                    string logFile = "AF Transfer-ErrorLog " + DateTime.Now.ToString("MM-dd-yyyy") + ".txt.err";
+                    using (StreamWriter w = new StreamWriter(logPath + "/" + logFile, true))
+                    {
+                        w.WriteLine("{0} {1} : {2}", DateTime.Now.ToLongTimeString(),
+                        DateTime.Now.ToLongDateString(), logMessage);
+                    }
+                }
+            }
+            catch (Exception folder_ex)
+            {
+                string logFile = "AF Transfer" + DateTime.Now.ToString("MM-dd-yyyy") + ".txt.err";
+                using (StreamWriter w = new StreamWriter(@"./" + logFile, true))
+                {
+                    w.WriteLine("{0} {1} : {2}", DateTime.Now.ToLongTimeString(),
+                    DateTime.Now.ToLongDateString(), folder_ex.Message);
+                }
+            }
+
+
+        }
+    }
+}
